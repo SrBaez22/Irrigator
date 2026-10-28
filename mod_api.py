@@ -12,13 +12,24 @@ parametros = {
     "start_date": "2023-01-01",
     "end_date": "2025-12-31",
     "hourly": ",".join([
-        "temperature_2m",
-        "relative_humidity_2m",
         "soil_moisture_0_to_7cm",
-        "shortwave_radiation",
     ]),
     "timezone": "America/Manaus",
 }
+
+# Curva de retenção do artigo (Almeida et al., 2024, Eq. 1): theta = A * T^(-B)
+A = 0.5483
+B = 0.211
+
+
+def tensao_kpa(theta):
+    """Converte umidade volumétrica (m³/m³) em tensão da água no solo (kPa).
+    A equação do artigo só é válida de 0 a 100 kPa, então o resultado é limitado a esse intervalo."""
+    if theta is None or theta <= 0:
+        return None
+    t = (A / theta) ** (1 / B)
+    return min(max(t, 0), 100)
+
 
 try:
     response = requests.get(url, params=parametros, timeout=60)
@@ -26,23 +37,20 @@ try:
     dados = response.json()["hourly"]
 
     tempo = dados["time"]
-    temp = dados["temperature_2m"]
-    umid_ar = dados["relative_humidity_2m"]
     umid_solo = dados["soil_moisture_0_to_7cm"]
-    radiacao = dados["shortwave_radiation"]
 
     with open("dados_manaus_horarios.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["timestamp", "air_temperature_c", "relative_humidity_pct",
-                    "soil_moisture_pct", "solar_radiation_wm2"])
+        w.writerow(["timestamp","soil_moisture_pct", "soil_tension_kpa"])
         for i in range(len(tempo)):
             solo = umid_solo[i] * 100 if umid_solo[i] is not None else None
-            w.writerow([tempo[i], temp[i], umid_ar[i], solo, radiacao[i]])
+            tensao = tensao_kpa(umid_solo[i])
+            w.writerow([tempo[i], round(solo,2), round(tensao, 2) if tensao is not None else None])
 
     print(f"{len(tempo)} linhas salvas em dados_manaus_horarios.csv")
-    print("Primeira linha:", tempo[0], temp[0], "°C |", umid_ar[0], "% |",
-          umid_solo[0] * 100 if umid_solo[0] is not None else None, "% |",
-          radiacao[0], "W/m²")
+    primeiro_solo = umid_solo[0] * 100 if umid_solo[0] is not None else None
+    primeira_tensao = tensao_kpa(umid_solo[0])
+    print("Primeira linha:", tempo[0], primeiro_solo, "% |", primeira_tensao, "kPa")
 
 except requests.exceptions.HTTPError as erro:
     print(f"Erro HTTP: {erro}\nDetalhe da API: {response.text}")
